@@ -1,6 +1,6 @@
 # NanoClaw
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues.
 
 ## Quick Context
 

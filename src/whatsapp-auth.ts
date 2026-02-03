@@ -15,15 +15,16 @@ import makeWASocket, {
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import fs from 'fs';
-import path from 'path';
 
 const AUTH_DIR = './store/auth';
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
 
 const logger = pino({
   level: 'warn', // Quiet logging - only show errors
 });
 
-async function authenticate(): Promise<void> {
+async function authenticate(attempt = 1): Promise<void> {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -34,7 +35,11 @@ async function authenticate(): Promise<void> {
     process.exit(0);
   }
 
-  console.log('Starting WhatsApp authentication...\n');
+  if (attempt === 1) {
+    console.log('Starting WhatsApp authentication...\n');
+  } else {
+    console.log(`\nRetrying connection (attempt ${attempt}/${MAX_RETRIES})...\n`);
+  }
 
   const sock = makeWASocket({
     auth: {
@@ -46,7 +51,7 @@ async function authenticate(): Promise<void> {
     browser: ['NanoClaw', 'Chrome', '1.0.0'],
   });
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -59,12 +64,22 @@ async function authenticate(): Promise<void> {
 
     if (connection === 'close') {
       const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+      const errorCode = (lastDisconnect?.error as any)?.output?.payload?.code;
 
       if (reason === DisconnectReason.loggedOut) {
         console.log('\n✗ Logged out. Delete store/auth and try again.');
         process.exit(1);
+      }
+
+      // Retry on transient errors (like stream error 515)
+      if (attempt < MAX_RETRIES) {
+        console.log(`\n⚠ Connection interrupted (code: ${errorCode || reason || 'unknown'})`);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        authenticate(attempt + 1);
       } else {
-        console.log('\n✗ Connection failed. Please try again.');
+        console.log('\n✗ Connection failed after multiple attempts.');
+        console.log('  This may be a temporary WhatsApp server issue.');
+        console.log('  Please wait a few minutes and try again.');
         process.exit(1);
       }
     }

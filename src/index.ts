@@ -508,6 +508,29 @@ async function connectWhatsApp(): Promise<void> {
       }
     } else if (connection === 'open') {
       logger.info('Connected to WhatsApp');
+
+      // Send startup notification to main group
+      const mainGroupEntry = Object.entries(registeredGroups).find(
+        ([, group]) => group.folder === MAIN_GROUP_FOLDER
+      );
+      if (mainGroupEntry) {
+        const [mainGroupJid, mainGroup] = mainGroupEntry;
+        sendMessage(mainGroupJid, `${ASSISTANT_NAME}: Started`);
+
+        // Query market status and send to main group
+        (async () => {
+          const marketPrompt = `<messages>\n<message sender="System" time="${new Date().toISOString()}">How is the market today?</message>\n</messages>`;
+          await setTyping(mainGroupJid, true);
+          const response = await runAgent(mainGroup, marketPrompt, mainGroupJid);
+          await setTyping(mainGroupJid, false);
+          if (response) {
+            await sendMessage(mainGroupJid, `${ASSISTANT_NAME}: ${response}`);
+          }
+        })().catch(err => logger.error({ err }, 'Failed to query market status on startup'));
+      } else {
+        logger.warn('No main group registered. Run the setup to register your main WhatsApp group.');
+      }
+
       // Sync group metadata on startup (respects 24h cache)
       syncGroupMetadata().catch(err => logger.error({ err }, 'Initial group sync failed'));
       // Set up daily sync timer
@@ -581,7 +604,7 @@ function ensureContainerSystemRunning(): void {
   }
 
   logger.info('Starting Apple Container system...');
-  const startResult = Bun.spawnSync(['container', 'system', 'start']);
+  const startResult = Bun.spawnSync(['container', 'system', 'start', '--enable-kernel-install']);
   if (startResult.exitCode === 0) {
     logger.info('Apple Container system started');
     return;
