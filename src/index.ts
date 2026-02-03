@@ -5,7 +5,6 @@ import makeWASocket, {
   WASocket
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
-import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -491,7 +490,7 @@ async function connectWhatsApp(): Promise<void> {
     if (qr) {
       const msg = 'WhatsApp authentication required. Run /setup in Claude Code.';
       logger.error(msg);
-      exec(`osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`);
+      Bun.spawn(['osascript', '-e', `display notification "${msg}" with title "NanoClaw" sound name "Basso"`]);
       setTimeout(() => process.exit(1), 1000);
     }
 
@@ -575,27 +574,30 @@ async function startMessageLoop(): Promise<void> {
 }
 
 function ensureContainerSystemRunning(): void {
-  try {
-    execSync('container system status', { stdio: 'pipe' });
+  const statusResult = Bun.spawnSync(['container', 'system', 'status']);
+  if (statusResult.exitCode === 0) {
     logger.debug('Apple Container system already running');
-  } catch {
-    logger.info('Starting Apple Container system...');
-    try {
-      execSync('container system start', { stdio: 'pipe', timeout: 30000 });
-      logger.info('Apple Container system started');
-    } catch (err) {
-      logger.error({ err }, 'Failed to start Apple Container system');
-      console.error('\n╔════════════════════════════════════════════════════════════════╗');
-      console.error('║  FATAL: Apple Container system failed to start                 ║');
-      console.error('║                                                                ║');
-      console.error('║  Agents cannot run without Apple Container. To fix:           ║');
-      console.error('║  1. Install from: https://github.com/apple/container/releases ║');
-      console.error('║  2. Run: container system start                               ║');
-      console.error('║  3. Restart NanoClaw                                          ║');
-      console.error('╚════════════════════════════════════════════════════════════════╝\n');
-      throw new Error('Apple Container system is required but failed to start');
-    }
+    return;
   }
+
+  logger.info('Starting Apple Container system...');
+  const startResult = Bun.spawnSync(['container', 'system', 'start']);
+  if (startResult.exitCode === 0) {
+    logger.info('Apple Container system started');
+    return;
+  }
+
+  const stderr = startResult.stderr.toString();
+  logger.error({ stderr }, 'Failed to start Apple Container system');
+  console.error('\n╔════════════════════════════════════════════════════════════════╗');
+  console.error('║  FATAL: Apple Container system failed to start                 ║');
+  console.error('║                                                                ║');
+  console.error('║  Agents cannot run without Apple Container. To fix:           ║');
+  console.error('║  1. Install from: https://github.com/apple/container/releases ║');
+  console.error('║  2. Run: container system start                               ║');
+  console.error('║  3. Restart NanoClaw                                          ║');
+  console.error('╚════════════════════════════════════════════════════════════════╝\n');
+  throw new Error('Apple Container system is required but failed to start');
 }
 
 async function main(): Promise<void> {

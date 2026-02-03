@@ -3,7 +3,6 @@
  * Spawns agent execution in Apple Container and handles IPC
  */
 
-import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -200,185 +199,196 @@ export async function runContainerAgent(
   const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
-  return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-
-    container.stdin.write(JSON.stringify(input));
-    container.stdin.end();
-
-    container.stdout.on('data', (data) => {
-      if (stdoutTruncated) return;
-      const chunk = data.toString();
-      const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
-      if (chunk.length > remaining) {
-        stdout += chunk.slice(0, remaining);
-        stdoutTruncated = true;
-        logger.warn({ group: group.name, size: stdout.length }, 'Container stdout truncated due to size limit');
-      } else {
-        stdout += chunk;
-      }
-    });
-
-    container.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      const lines = chunk.trim().split('\n');
-      for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
-      }
-      if (stderrTruncated) return;
-      const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
-      if (chunk.length > remaining) {
-        stderr += chunk.slice(0, remaining);
-        stderrTruncated = true;
-        logger.warn({ group: group.name, size: stderr.length }, 'Container stderr truncated due to size limit');
-      } else {
-        stderr += chunk;
-      }
-    });
-
-    const timeout = setTimeout(() => {
-      logger.error({ group: group.name }, 'Container timeout, killing');
-      container.kill('SIGKILL');
-      resolve({
-        status: 'error',
-        result: null,
-        error: `Container timed out after ${CONTAINER_TIMEOUT}ms`
-      });
-    }, group.containerConfig?.timeout || CONTAINER_TIMEOUT);
-
-    container.on('close', (code) => {
-      clearTimeout(timeout);
-      const duration = Date.now() - startTime;
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFile = path.join(logsDir, `container-${timestamp}.log`);
-      const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
-
-      const logLines = [
-        `=== Container Run Log ===`,
-        `Timestamp: ${new Date().toISOString()}`,
-        `Group: ${group.name}`,
-        `IsMain: ${input.isMain}`,
-        `Duration: ${duration}ms`,
-        `Exit Code: ${code}`,
-        `Stdout Truncated: ${stdoutTruncated}`,
-        `Stderr Truncated: ${stderrTruncated}`,
-        ``
-      ];
-
-      if (isVerbose) {
-        logLines.push(
-          `=== Input ===`,
-          JSON.stringify(input, null, 2),
-          ``,
-          `=== Container Args ===`,
-          containerArgs.join(' '),
-          ``,
-          `=== Mounts ===`,
-          mounts.map(m => `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),
-          ``,
-          `=== Stderr${stderrTruncated ? ' (TRUNCATED)' : ''} ===`,
-          stderr,
-          ``,
-          `=== Stdout${stdoutTruncated ? ' (TRUNCATED)' : ''} ===`,
-          stdout
-        );
-      } else {
-        logLines.push(
-          `=== Input Summary ===`,
-          `Prompt length: ${input.prompt.length} chars`,
-          `Session ID: ${input.sessionId || 'new'}`,
-          ``,
-          `=== Mounts ===`,
-          mounts.map(m => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),
-          ``
-        );
-
-        if (code !== 0) {
-          logLines.push(
-            `=== Stderr (last 500 chars) ===`,
-            stderr.slice(-500),
-            ``
-          );
-        }
-      }
-
-      fs.writeFileSync(logFile, logLines.join('\n'));
-      logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
-
-      if (code !== 0) {
-        logger.error({
-          group: group.name,
-          code,
-          duration,
-          stderr: stderr.slice(-500),
-          logFile
-        }, 'Container exited with error');
-
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`
-        });
-        return;
-      }
-
-      try {
-        // Extract JSON between sentinel markers for robust parsing
-        const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-        const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-
-        let jsonLine: string;
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          jsonLine = stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
-        } else {
-          // Fallback: last non-empty line (backwards compatibility)
-          const lines = stdout.trim().split('\n');
-          jsonLine = lines[lines.length - 1];
-        }
-
-        const output: ContainerOutput = JSON.parse(jsonLine);
-
-        logger.info({
-          group: group.name,
-          duration,
-          status: output.status,
-          hasResult: !!output.result
-        }, 'Container completed');
-
-        resolve(output);
-      } catch (err) {
-        logger.error({
-          group: group.name,
-          stdout: stdout.slice(-500),
-          error: err
-        }, 'Failed to parse container output');
-
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`
-        });
-      }
-    });
-
-    container.on('error', (err) => {
-      clearTimeout(timeout);
-      logger.error({ group: group.name, error: err }, 'Container spawn error');
-      resolve({
-        status: 'error',
-        result: null,
-        error: `Container spawn error: ${err.message}`
-      });
-    });
+  const container = Bun.spawn(['container', ...containerArgs], {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
+
+  // Write input to stdin
+  container.stdin.write(JSON.stringify(input));
+  container.stdin.end();
+
+  // Set up timeout
+  const timeoutMs = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    logger.error({ group: group.name }, 'Container timeout, killing');
+    container.kill();
+  }, timeoutMs);
+
+  // Collect stdout and stderr with size limits
+  let stdout = '';
+  let stderr = '';
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
+
+  const collectStream = async (stream: ReadableStream<Uint8Array>, isStdout: boolean) => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+
+      if (isStdout) {
+        if (stdoutTruncated) continue;
+        const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
+        if (chunk.length > remaining) {
+          stdout += chunk.slice(0, remaining);
+          stdoutTruncated = true;
+          logger.warn({ group: group.name, size: stdout.length }, 'Container stdout truncated due to size limit');
+        } else {
+          stdout += chunk;
+        }
+      } else {
+        const lines = chunk.trim().split('\n');
+        for (const line of lines) {
+          if (line) logger.debug({ container: group.folder }, line);
+        }
+        if (stderrTruncated) continue;
+        const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
+        if (chunk.length > remaining) {
+          stderr += chunk.slice(0, remaining);
+          stderrTruncated = true;
+          logger.warn({ group: group.name, size: stderr.length }, 'Container stderr truncated due to size limit');
+        } else {
+          stderr += chunk;
+        }
+      }
+    }
+  };
+
+  // Collect streams in parallel and wait for exit
+  await Promise.all([
+    collectStream(container.stdout, true),
+    collectStream(container.stderr, false),
+  ]);
+
+  const code = await container.exited;
+  clearTimeout(timeoutId);
+
+  if (timedOut) {
+    return {
+      status: 'error',
+      result: null,
+      error: `Container timed out after ${timeoutMs}ms`
+    };
+  }
+
+  const duration = Date.now() - startTime;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const logFile = path.join(logsDir, `container-${timestamp}.log`);
+  const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+
+  const logLines = [
+    `=== Container Run Log ===`,
+    `Timestamp: ${new Date().toISOString()}`,
+    `Group: ${group.name}`,
+    `IsMain: ${input.isMain}`,
+    `Duration: ${duration}ms`,
+    `Exit Code: ${code}`,
+    `Stdout Truncated: ${stdoutTruncated}`,
+    `Stderr Truncated: ${stderrTruncated}`,
+    ``
+  ];
+
+  if (isVerbose) {
+    logLines.push(
+      `=== Input ===`,
+      JSON.stringify(input, null, 2),
+      ``,
+      `=== Container Args ===`,
+      containerArgs.join(' '),
+      ``,
+      `=== Mounts ===`,
+      mounts.map(m => `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),
+      ``,
+      `=== Stderr${stderrTruncated ? ' (TRUNCATED)' : ''} ===`,
+      stderr,
+      ``,
+      `=== Stdout${stdoutTruncated ? ' (TRUNCATED)' : ''} ===`,
+      stdout
+    );
+  } else {
+    logLines.push(
+      `=== Input Summary ===`,
+      `Prompt length: ${input.prompt.length} chars`,
+      `Session ID: ${input.sessionId || 'new'}`,
+      ``,
+      `=== Mounts ===`,
+      mounts.map(m => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),
+      ``
+    );
+
+    if (code !== 0) {
+      logLines.push(
+        `=== Stderr (last 500 chars) ===`,
+        stderr.slice(-500),
+        ``
+      );
+    }
+  }
+
+  fs.writeFileSync(logFile, logLines.join('\n'));
+  logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
+
+  if (code !== 0) {
+    logger.error({
+      group: group.name,
+      code,
+      duration,
+      stderr: stderr.slice(-500),
+      logFile
+    }, 'Container exited with error');
+
+    return {
+      status: 'error',
+      result: null,
+      error: `Container exited with code ${code}: ${stderr.slice(-200)}`
+    };
+  }
+
+  try {
+    // Extract JSON between sentinel markers for robust parsing
+    const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
+    const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
+
+    let jsonLine: string;
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      jsonLine = stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
+    } else {
+      // Fallback: last non-empty line (backwards compatibility)
+      const lines = stdout.trim().split('\n');
+      jsonLine = lines[lines.length - 1];
+    }
+
+    const output: ContainerOutput = JSON.parse(jsonLine);
+
+    logger.info({
+      group: group.name,
+      duration,
+      status: output.status,
+      hasResult: !!output.result
+    }, 'Container completed');
+
+    return output;
+  } catch (err) {
+    logger.error({
+      group: group.name,
+      stdout: stdout.slice(-500),
+      error: err
+    }, 'Failed to parse container output');
+
+    return {
+      status: 'error',
+      result: null,
+      error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`
+    };
+  }
 }
 
 export function writeTasksSnapshot(
