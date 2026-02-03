@@ -106,7 +106,7 @@ Skills we'd love to see:
 ## Requirements
 
 - macOS Tahoe (26) or later - runs great on Mac Mini
-- Node.js 20+
+- [Bun](https://bun.sh) runtime
 - [Claude Code](https://claude.ai/download)
 - [Apple Container](https://github.com/apple/container)
 
@@ -116,7 +116,7 @@ Skills we'd love to see:
 WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
 ```
 
-Single Node.js process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
+Single Bun process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
 
 Key files:
 - `src/index.ts` - Main app: WhatsApp connection, routing, IPC

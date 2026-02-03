@@ -41,7 +41,7 @@ Set `LOG_LEVEL=debug` for verbose output:
 
 ```bash
 # For development
-LOG_LEVEL=debug npm run dev
+LOG_LEVEL=debug bun run dev
 
 # For launchd service, add to plist EnvironmentVariables:
 <key>LOG_LEVEL</key>
@@ -228,9 +228,6 @@ query({
 ## Rebuilding After Changes
 
 ```bash
-# Rebuild main app
-npm run build
-
 # Rebuild container (use --no-cache for clean rebuild)
 ./container/build.sh
 

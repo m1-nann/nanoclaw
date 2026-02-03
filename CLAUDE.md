@@ -30,8 +30,9 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 Run commands directly—don't tell the user to run them.
 
 ```bash
-npm run dev          # Run with hot reload
-npm run build        # Compile TypeScript
+bun run dev          # Run with hot reload (--watch)
+bun run start        # Run the app
+bun run auth         # WhatsApp authentication
 ./container/build.sh # Rebuild agent container
 ```
 

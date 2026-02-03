@@ -10,8 +10,8 @@
 import fs from 'fs';
 import path from 'path';
 import pino from 'pino';
-import { MOUNT_ALLOWLIST_PATH } from './config.js';
-import { AdditionalMount, MountAllowlist, AllowedRoot } from './types.js';
+import { MOUNT_ALLOWLIST_PATH } from './config.ts';
+import { AdditionalMount, MountAllowlist, AllowedRoot } from './types.ts';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',

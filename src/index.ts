@@ -18,12 +18,12 @@ import {
   MAIN_GROUP_FOLDER,
   IPC_POLL_INTERVAL,
   TIMEZONE
-} from './config.js';
-import { RegisteredGroup, Session, NewMessage } from './types.js';
-import { initDatabase, storeMessage, storeChatMetadata, getNewMessages, getMessagesSince, getAllTasks, getTaskById, updateChatName, getAllChats, getLastGroupSync, setLastGroupSync } from './db.js';
-import { startSchedulerLoop } from './task-scheduler.js';
-import { runContainerAgent, writeTasksSnapshot, writeGroupsSnapshot, AvailableGroup } from './container-runner.js';
-import { loadJson, saveJson } from './utils.js';
+} from './config.ts';
+import { RegisteredGroup, Session, NewMessage } from './types.ts';
+import { initDatabase, storeMessage, storeChatMetadata, getNewMessages, getMessagesSince, getAllTasks, getTaskById, updateChatName, getAllChats, getLastGroupSync, setLastGroupSync } from './db.ts';
+import { startSchedulerLoop } from './task-scheduler.ts';
+import { runContainerAgent, writeTasksSnapshot, writeGroupsSnapshot, AvailableGroup } from './container-runner.ts';
+import { loadJson, saveJson } from './utils.ts';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -328,7 +328,7 @@ async function processTaskIpc(
   isMain: boolean       // Verified from directory path
 ): Promise<void> {
   // Import db functions dynamically to avoid circular deps
-  const { createTask, updateTask, deleteTask, getTaskById: getTask } = await import('./db.js');
+  const { createTask, updateTask, deleteTask, getTaskById: getTask } = await import('./db.ts');
   const { CronExpressionParser } = await import('cron-parser');
 
   switch (data.type) {
@@ -441,7 +441,7 @@ async function processTaskIpc(
         await syncGroupMetadata(true);
         // Write updated snapshot immediately
         const availableGroups = getAvailableGroups();
-        const { writeGroupsSnapshot: writeGroups } = await import('./container-runner.js');
+        const { writeGroupsSnapshot: writeGroups } = await import('./container-runner.ts');
         writeGroups(sourceGroup, true, availableGroups, new Set(Object.keys(registeredGroups)));
       } else {
         logger.warn({ sourceGroup }, 'Unauthorized refresh_groups attempt blocked');

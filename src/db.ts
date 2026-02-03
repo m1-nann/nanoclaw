@@ -1,11 +1,11 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import fs from 'fs';
 import path from 'path';
 import { proto } from '@whiskeysockets/baileys';
-import { NewMessage, ScheduledTask, TaskRunLog } from './types.js';
-import { STORE_DIR } from './config.js';
+import { NewMessage, ScheduledTask, TaskRunLog } from './types.ts';
+import { STORE_DIR } from './config.ts';
 
-let db: Database.Database;
+let db: Database;
 
 export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
@@ -228,7 +228,7 @@ export function getAllTasks(): ScheduledTask[] {
 
 export function updateTask(id: string, updates: Partial<Pick<ScheduledTask, 'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'>>): void {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | null)[] = [];
 
   if (updates.prompt !== undefined) { fields.push('prompt = ?'); values.push(updates.prompt); }
   if (updates.schedule_type !== undefined) { fields.push('schedule_type = ?'); values.push(updates.schedule_type); }

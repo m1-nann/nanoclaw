@@ -16,7 +16,7 @@ NanoClaw gives you the core functionality without that mess.
 
 ### Small Enough to Understand
 
-The entire codebase should be something you can read and understand. One Node.js process. A handful of source files. No microservices, no message queues, no abstraction layers.
+The entire codebase should be something you can read and understand. One Bun process. A handful of source files. No microservices, no message queues, no abstraction layers.
 
 ### Security Through True Isolation
 
@@ -176,7 +176,7 @@ A personal Claude assistant accessible via WhatsApp, with minimal custom code.
 
 ### Deployment
 - Runs on local Mac via launchd
-- Single Node.js process handles everything
+- Single Bun process handles everything
 
 ---
 

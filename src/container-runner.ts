@@ -14,9 +14,9 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   GROUPS_DIR,
   DATA_DIR
-} from './config.js';
-import { RegisteredGroup } from './types.js';
-import { validateAdditionalMounts } from './mount-security.js';
+} from './config.ts';
+import { RegisteredGroup } from './types.ts';
+import { validateAdditionalMounts } from './mount-security.ts';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',

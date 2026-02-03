@@ -10,7 +10,7 @@ Run all commands automatically. Only pause when user action is required (scannin
 ## 1. Install Dependencies
 
 ```bash
-npm install
+bun install
 ```
 
 ## 2. Install Apple Container
@@ -93,7 +93,7 @@ Build the NanoClaw agent container:
 ./container/build.sh
 ```
 
-This creates the `nanoclaw-agent:latest` image with Node.js, Chromium, Claude Code CLI, and agent-browser.
+This creates the `nanoclaw-agent:latest` image with Bun, Chromium, Claude Code CLI, and agent-browser.
 
 Verify the build succeeded (the `container images` command may not work due to a plugin issue, so we verify by running a simple test):
 
@@ -108,7 +108,7 @@ echo '{}' | container run -i --entrypoint /bin/echo nanoclaw-agent:latest "Conta
 Run the authentication script:
 
 ```bash
-npm run auth
+bun run auth
 ```
 
 Tell the user:
@@ -149,7 +149,7 @@ For group:
 After user confirms, start the app briefly to capture the message:
 
 ```bash
-timeout 10 npm run dev || true
+timeout 10 bun run dev || true
 ```
 
 Then find the JID from the database:
@@ -291,7 +291,7 @@ Tell the user:
 Generate the plist file with correct paths automatically:
 
 ```bash
-NODE_PATH=$(which node)
+BUN_PATH=$(which bun)
 PROJECT_PATH=$(pwd)
 HOME_PATH=$HOME
 
@@ -304,8 +304,9 @@ cat > ~/Library/LaunchAgents/com.nanoclaw.plist << EOF
     <string>com.nanoclaw</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${NODE_PATH}</string>
-        <string>${PROJECT_PATH}/dist/index.js</string>
+        <string>${BUN_PATH}</string>
+        <string>run</string>
+        <string>${PROJECT_PATH}/src/index.ts</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${PROJECT_PATH}</string>
@@ -316,7 +317,7 @@ cat > ~/Library/LaunchAgents/com.nanoclaw.plist << EOF
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:${HOME_PATH}/.local/bin</string>
+        <string>/usr/local/bin:/usr/bin:/bin:${HOME_PATH}/.local/bin:${HOME_PATH}/.bun/bin</string>
         <key>HOME</key>
         <string>${HOME_PATH}</string>
     </dict>
@@ -329,14 +330,13 @@ cat > ~/Library/LaunchAgents/com.nanoclaw.plist << EOF
 EOF
 
 echo "Created launchd plist with:"
-echo "  Node: ${NODE_PATH}"
+echo "  Bun: ${BUN_PATH}"
 echo "  Project: ${PROJECT_PATH}"
 ```
 
-Build and start the service:
+Start the service:
 
 ```bash
-npm run build
 mkdir -p logs
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 ```
@@ -373,7 +373,7 @@ The user should receive a response in WhatsApp.
 
 **WhatsApp disconnected**:
 - The service will show a macOS notification
-- Run `npm run auth` to re-authenticate
+- Run `bun run auth` to re-authenticate
 - Restart the service: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 
 **Unload service**:

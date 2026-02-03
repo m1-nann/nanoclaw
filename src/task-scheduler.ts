@@ -2,10 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import pino from 'pino';
 import { CronExpressionParser } from 'cron-parser';
-import { getDueTasks, updateTaskAfterRun, logTaskRun, getTaskById, getAllTasks } from './db.js';
-import { ScheduledTask, RegisteredGroup } from './types.js';
-import { GROUPS_DIR, SCHEDULER_POLL_INTERVAL, DATA_DIR, MAIN_GROUP_FOLDER, TIMEZONE } from './config.js';
-import { runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import { getDueTasks, updateTaskAfterRun, logTaskRun, getTaskById, getAllTasks } from './db.ts';
+import { ScheduledTask, RegisteredGroup } from './types.ts';
+import { GROUPS_DIR, SCHEDULER_POLL_INTERVAL, DATA_DIR, MAIN_GROUP_FOLDER, TIMEZONE } from './config.ts';
+import { runContainerAgent, writeTasksSnapshot } from './container-runner.ts';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',

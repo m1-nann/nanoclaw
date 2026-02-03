@@ -6,8 +6,9 @@
     <string>com.nanoclaw</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{NODE_PATH}}</string>
-        <string>{{PROJECT_ROOT}}/dist/index.js</string>
+        <string>{{BUN_PATH}}</string>
+        <string>run</string>
+        <string>{{PROJECT_ROOT}}/src/index.ts</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{{PROJECT_ROOT}}</string>
