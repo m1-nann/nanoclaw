@@ -81,6 +81,7 @@ export function verifyPairingCode(code: string): { jid: string; name: string; fo
     name: pairing.chatTitle,
     folder,
     trigger: '',
+    type: 'chat',
     added_at: new Date().toISOString()
   });
 
@@ -119,7 +120,7 @@ export interface TelegramDependencies {
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
   getMessagesSince: (chatJid: string, sinceTimestamp: string, botPrefix: string) => NewMessage[];
   storeGenericMessage: (msg: NewMessage) => void;
-  runAgent: (group: RegisteredGroup, prompt: string, chatJid: string) => Promise<string | null>;
+  runAgent: (group: RegisteredGroup, prompt: string, chatJid: string) => Promise<{ result: string | null; tokens?: { input: number; cacheRead: number; cacheWrite: number; output: number } }>;
   getLastAgentTimestamp: () => Record<string, string>;
   setLastAgentTimestamp: (jid: string, timestamp: string) => void;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
@@ -242,6 +243,7 @@ function tryVerifyPairingCode(chatId: number, text: string): boolean {
     name: pairing.chatTitle,
     folder,
     trigger: '',
+    type: 'chat',
     added_at: new Date().toISOString()
   });
 
@@ -328,11 +330,13 @@ async function processMessage(ctx: Context): Promise<void> {
 
   // Set typing and run agent
   await setTelegramTyping(jid, true);
-  const response = await deps.runAgent(group, prompt, jid);
+  const { result: response, tokens } = await deps.runAgent(group, prompt, jid);
 
   if (response) {
     deps.setLastAgentTimestamp(jid, timestamp);
-    await sendTelegramMessage(jid, response);
+    const fmt = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}K` : String(n);
+    const tokenSuffix = tokens ? ` (${fmt(tokens.input)}+${fmt(tokens.cacheRead)}→${fmt(tokens.output)})` : '';
+    await sendTelegramMessage(jid, `${response} 🤖${tokenSuffix}`);
   }
 }
 
@@ -381,6 +385,7 @@ export async function startTelegramBot(dependencies: TelegramDependencies): Prom
           name: chatTitle,
           folder,
           trigger: '',
+          type: 'chat',
           added_at: new Date().toISOString()
         });
         deps!.sendSystemNotification(`Telegram chat registered: "${chatTitle}" (${folder})`);

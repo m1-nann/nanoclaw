@@ -1,6 +1,6 @@
 import path from 'path';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'EI';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -24,7 +24,7 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export const TRIGGER_PATTERN = new RegExp(`^@${escapeRegex(ASSISTANT_NAME)}\\b`, 'i');
+export const TRIGGER_PATTERN = new RegExp(`^${escapeRegex(ASSISTANT_NAME)}\\b`, 'i');
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

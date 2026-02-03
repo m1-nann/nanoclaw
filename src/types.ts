@@ -37,6 +37,7 @@ export interface RegisteredGroup {
   name: string;
   folder: string;
   trigger: string;
+  type: 'system' | 'chat';  // system = main group, chat = WhatsApp chat groups
   added_at: string;
   containerConfig?: ContainerConfig;
 }

@@ -32,6 +32,7 @@ interface RegisteredGroup {
   name: string;
   folder: string;
   trigger: string;
+  type: 'system' | 'chat';
   added_at: string;
 }
 
@@ -139,7 +140,8 @@ async function main(): Promise<void> {
         registeredGroups[selected.jid] = {
           name: selected.name,
           folder: 'main',
-          trigger: '@Andy',
+          trigger: 'EI',
+          type: 'system',
           added_at: new Date().toISOString(),
         };
 

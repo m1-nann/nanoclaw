@@ -202,16 +202,23 @@ async function processMessage(msg: NewMessage): Promise<void> {
   logger.info({ group: group.name, messageCount: missedMessages.length }, 'Processing message');
 
   await setTyping(msg.chat_jid, true);
-  const response = await runAgent(group, prompt, msg.chat_jid);
+  const { result: response, tokens } = await runAgent(group, prompt, msg.chat_jid);
   await setTyping(msg.chat_jid, false);
 
   if (response) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    await sendMessage(msg.chat_jid, response);
+    const fmt = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}K` : String(n);
+    const tokenSuffix = tokens ? ` (${fmt(tokens.input)}+${fmt(tokens.cacheRead)}→${fmt(tokens.output)})` : '';
+    await sendMessage(msg.chat_jid, `${response} 🤖${tokenSuffix}`);
   }
 }
 
-async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string): Promise<string | null> {
+interface AgentResult {
+  result: string | null;
+  tokens?: { input: number; cacheRead: number; cacheWrite: number; output: number };
+}
+
+async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string): Promise<AgentResult> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
 
@@ -238,6 +245,7 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
       groupFolder: group.folder,
       chatJid,
       isMain,
+      groupType: group.type || 'system',
       currentTime: new Date().toLocaleString('en-US', { timeZone: TIMEZONE, dateStyle: 'full', timeStyle: 'long' })
     });
 
@@ -248,13 +256,13 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
 
     if (output.status === 'error') {
       logger.error({ group: group.name, error: output.error }, 'Container agent error');
-      return null;
+      return { result: null };
     }
 
-    return output.result;
+    return { result: output.result, tokens: output.tokens };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    return null;
+    return { result: null };
   }
 }
 
@@ -513,6 +521,7 @@ async function processTaskIpc(
           name: data.name,
           folder: data.folder,
           trigger: data.trigger,
+          type: (data as any).type || 'system',
           added_at: new Date().toISOString(),
           containerConfig: data.containerConfig
         });
@@ -598,7 +607,7 @@ async function connectWhatsApp(): Promise<void> {
       );
       if (mainGroupEntry) {
         const [mainGroupJid] = mainGroupEntry;
-        sendMessage(mainGroupJid, `${ASSISTANT_NAME}: System started`);
+        sendMessage(mainGroupJid, `System started 🤖`);
       }
 
       // Sync group metadata on startup (respects 24h cache)
@@ -613,24 +622,56 @@ async function connectWhatsApp(): Promise<void> {
         getSessions: () => sessions
       });
       startIpcWatcher();
-      // WhatsApp message loop disabled - using WhatsApp for system events only
+      startMessageLoop();
     }
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('messages.upsert', ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message) continue;
       const chatJid = msg.key.remoteJid;
       if (!chatJid || chatJid === 'status@broadcast') continue;
 
       const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
+      const content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+
+      logger.info({
+        chatJid,
+        sender: msg.pushName || 'unknown',
+        fromMe: msg.key.fromMe || false,
+        content: content.slice(0, 50) + (content.length > 50 ? '...' : '')
+      }, 'WhatsApp message received');
 
       // Always store chat metadata for group discovery
       storeChatMetadata(chatJid, timestamp);
 
-      // Only store full message content for registered groups
+      // Check for registration command in unregistered groups (before fromMe skip)
+      // Safe because welcome message doesn't start with "EI" so won't trigger loop
+      if (!registeredGroups[chatJid] && chatJid.endsWith('@g.us')) {
+        const REGISTER_PATTERN = /^EI\s+register\s+this\s+group$/i;
+        if (REGISTER_PATTERN.test(content.trim())) {
+          // Self-register as chat group
+          const groupName = await sock.groupMetadata(chatJid).then(m => m.subject).catch(() => chatJid);
+          const folder = `chat-${Date.now()}`;
+          registerGroup(chatJid, {
+            name: groupName,
+            folder,
+            trigger: 'EI',
+            type: 'chat',
+            added_at: new Date().toISOString()
+          });
+          // Welcome message - ends with 🤖 to be filtered, doesn't start with "EI" to avoid loop
+          await sendMessage(chatJid, `Got it! Say "EI" followed by your message. Replies are brief. 🤖`);
+          continue;
+        }
+      }
+
+      // Skip messages ending with robot emoji (bot messages)
+      if (content.trimEnd().endsWith('🤖')) continue;
+
+      // Store message for registered groups (including fromMe for chat groups)
       if (registeredGroups[chatJid]) {
         storeMessage(msg, chatJid, msg.key.fromMe || false, msg.pushName || undefined);
       }
@@ -719,7 +760,7 @@ async function main(): Promise<void> {
         );
         if (mainGroupEntry) {
           logger.info({ text, jid: mainGroupEntry[0] }, 'Sending system notification');
-          sendMessage(mainGroupEntry[0], `${ASSISTANT_NAME}: ${text}`);
+          sendMessage(mainGroupEntry[0], `${text} 🤖`);
         } else {
           logger.warn({ text }, 'No main group found for system notification');
         }

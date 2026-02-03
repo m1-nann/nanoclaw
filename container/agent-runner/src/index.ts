@@ -14,6 +14,7 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  groupType: 'system' | 'chat';
   isScheduledTask?: boolean;
   currentTime: string;  // Local time from host
 }
@@ -23,6 +24,12 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  tokens?: {
+    input: number;
+    cacheRead: number;
+    cacheWrite: number;
+    output: number;
+  };
 }
 
 interface SessionEntry {
@@ -190,7 +197,7 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   lines.push('');
 
   for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : 'Andy';
+    const sender = msg.role === 'user' ? 'User' : 'EI';
     const content = msg.content.length > 2000
       ? msg.content.slice(0, 2000) + '...'
       : msg.content;
@@ -226,6 +233,10 @@ async function main(): Promise<void> {
 
   let result: string | null = null;
   let newSessionId: string | undefined;
+  let totalInputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheWriteTokens = 0;
+  let totalOutputTokens = 0;
 
   // Build prompt with context
   let prompt = input.prompt;
@@ -235,6 +246,20 @@ async function main(): Promise<void> {
     prompt = `${timeContext}\n[SCHEDULED TASK - You are running automatically, not in response to a user message. Use mcp__nanoclaw__send_message if needed to communicate with the user.]\n\n${input.prompt}`;
   } else {
     prompt = `${timeContext}\n${input.prompt}`;
+  }
+
+  // Chat groups have response length limits and emoji guidelines
+  if (input.groupType === 'chat') {
+    prompt = `[RESPONSE RULES FOR CHAT GROUP]
+- Keep responses under 255 characters, single paragraph only
+- Start with emoji based on task type:
+  ⏰ for reminders/timers (one-time alerts)
+  📅 for scheduled tasks (recurring/cron jobs)
+  📝 for notes/memory
+  👍 for confirmations
+  ❌ for errors/failures
+  💬 for general chat responses
+[END RULES]\n${prompt}`;
   }
 
   try {
@@ -262,9 +287,20 @@ async function main(): Promise<void> {
         }
       }
     })) {
+      const msg = message as any;
+
       if (message.type === 'system' && message.subtype === 'init') {
         newSessionId = message.session_id;
         log(`Session initialized: ${newSessionId}`);
+      }
+
+      // Track token usage
+      const usage = msg.usage || msg.message?.usage;
+      if (usage) {
+        totalInputTokens += usage.input_tokens || 0;
+        totalCacheReadTokens += usage.cache_read_input_tokens || 0;
+        totalCacheWriteTokens += usage.cache_creation_input_tokens || 0;
+        totalOutputTokens += usage.output_tokens || 0;
       }
 
       if ('result' in message && message.result) {
@@ -276,7 +312,13 @@ async function main(): Promise<void> {
     writeOutput({
       status: 'success',
       result,
-      newSessionId
+      newSessionId,
+      tokens: {
+        input: totalInputTokens,
+        cacheRead: totalCacheReadTokens,
+        cacheWrite: totalCacheWriteTokens,
+        output: totalOutputTokens
+      }
     });
 
   } catch (err) {

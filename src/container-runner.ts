@@ -40,6 +40,7 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  groupType: 'system' | 'chat';
   currentTime: string;  // ISO string in host's local timezone
   isScheduledTask?: boolean;
 }
@@ -49,6 +50,12 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  tokens?: {
+    input: number;
+    cacheRead: number;
+    cacheWrite: number;
+    output: number;
+  };
 }
 
 interface VolumeMount {
@@ -256,11 +263,10 @@ export async function runContainerAgent(
         const lines = chunk.trim().split('\n');
         for (const line of lines) {
           if (line) {
-            // Log time-related lines at info level for debugging timezone issues
-            if (line.includes('Container time:') || line.includes('TZ env:')) {
-              logger.info({ container: group.folder }, line);
-            } else {
-              logger.debug({ container: group.folder }, line);
+            // Only log agent-runner lines (skip noise from Claude SDK)
+            const match = line.match(/^\[agent-runner\] (.+)$/);
+            if (match) {
+              logger.info({ container: group.folder }, match[1]);
             }
           }
         }
@@ -387,7 +393,9 @@ export async function runContainerAgent(
       group: group.name,
       duration,
       status: output.status,
-      hasResult: !!output.result
+      tokens: output.tokens
+        ? `${output.tokens.input} in, ${output.tokens.cacheRead} cache, ${output.tokens.output} out`
+        : undefined
     }, 'Container completed');
 
     return output;
