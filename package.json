@@ -5,12 +5,12 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
     "auth": "bun run src/whatsapp-auth.ts",
     "setup-token": "bun run scripts/setup-claude-token.ts",
-    "register": "bun run src/register-group.ts"
+    "register": "bun run src/register-group.ts",
+    "build-container": "./container/build.sh"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
