@@ -5,15 +5,11 @@
 
 import { Bot, Context } from 'grammy';
 import pino from 'pino';
-import path from 'path';
-import fs from 'fs';
 
 import {
   TELEGRAM_BOT_TOKEN,
+  TELEGRAM_SECRET,
   ASSISTANT_NAME,
-  TRIGGER_PATTERN,
-  MAIN_GROUP_FOLDER,
-  DATA_DIR,
   TIMEZONE
 } from './config.ts';
 import { RegisteredGroup, NewMessage } from './types.ts';
@@ -80,11 +76,11 @@ export function verifyPairingCode(code: string): { jid: string; name: string; fo
   // Generate folder name
   const folder = `tg-${pairing.chatTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20)}`;
 
-  // Register the group
+  // Register the group (no trigger needed for Telegram)
   deps.registerGroup(pairing.jid, {
     name: pairing.chatTitle,
     folder,
-    trigger: `@${ASSISTANT_NAME}`,
+    trigger: '',
     added_at: new Date().toISOString()
   });
 
@@ -93,9 +89,12 @@ export function verifyPairingCode(code: string): { jid: string; name: string; fo
     bot.api.sendMessage(
       pairing.chatId,
       `Verified! This chat is now connected.\n\n` +
-      `Send a message starting with @${ASSISTANT_NAME} to chat with the assistant.`
+      `You can now send messages directly to chat with ${ASSISTANT_NAME}.`
     ).catch(err => logger.error({ err }, 'Failed to send verification confirmation'));
   }
+
+  // Send system notification to WhatsApp
+  deps.sendSystemNotification(`Telegram chat registered: "${pairing.chatTitle}" (${folder})`);
 
   pendingPairings.delete(code);
   logger.info({ jid: pairing.jid, name: pairing.chatTitle, folder }, 'Telegram chat registered via pairing code');
@@ -124,6 +123,7 @@ export interface TelegramDependencies {
   getLastAgentTimestamp: () => Record<string, string>;
   setLastAgentTimestamp: (jid: string, timestamp: string) => void;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
+  sendSystemNotification: (text: string) => void;
 }
 
 let deps: TelegramDependencies | null = null;
@@ -210,6 +210,57 @@ export async function setTelegramTyping(jid: string, isTyping: boolean): Promise
 }
 
 /**
+ * Check if message is a pairing code verification attempt
+ * Returns true if it was a code verification (successful or not)
+ */
+function tryVerifyPairingCode(chatId: number, text: string): boolean {
+  if (!deps) return false;
+
+  const trimmed = text.trim();
+  // Only check 6-digit codes
+  if (!/^\d{6}$/.test(trimmed)) return false;
+
+  const jid = chatIdToJid(chatId);
+
+  // Check if this chat has a pending pairing with this code
+  cleanupExpiredPairings();
+  const pairing = pendingPairings.get(trimmed);
+
+  if (!pairing || pairing.jid !== jid) {
+    // Code doesn't match this chat - could be wrong code or code for different chat
+    if (bot) {
+      bot.api.sendMessage(chatId, `Invalid or expired code. Send /start to get a new pairing code.`)
+        .catch(err => logger.error({ err }, 'Failed to send invalid code message'));
+    }
+    return true; // Still handled as a code attempt
+  }
+
+  // Valid code for this chat - register it
+  const folder = `tg-${pairing.chatTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20)}`;
+
+  deps.registerGroup(jid, {
+    name: pairing.chatTitle,
+    folder,
+    trigger: '',
+    added_at: new Date().toISOString()
+  });
+
+  if (bot) {
+    bot.api.sendMessage(chatId,
+      `Verified! This chat is now connected.\n\n` +
+      `You can now send messages directly to chat with ${ASSISTANT_NAME}.`
+    ).catch(err => logger.error({ err }, 'Failed to send verification confirmation'));
+  }
+
+  deps.sendSystemNotification(`Telegram chat registered: "${pairing.chatTitle}" (${folder})`);
+
+  pendingPairings.delete(trimmed);
+  logger.info({ jid, name: pairing.chatTitle, folder }, 'Telegram chat registered via pairing code');
+
+  return true;
+}
+
+/**
  * Process incoming Telegram message
  */
 async function processMessage(ctx: Context): Promise<void> {
@@ -229,7 +280,11 @@ async function processMessage(ctx: Context): Promise<void> {
   const group = registeredGroups[jid];
 
   if (!group) {
-    logger.info({ jid, chatId, senderName, text: text.slice(0, 50) }, 'Message from unregistered Telegram chat - register with this JID');
+    // Check if this is a pairing code verification attempt
+    if (tryVerifyPairingCode(chatId, text)) {
+      return; // Handled as pairing code
+    }
+    logger.info({ jid, chatId, senderName, text: text.slice(0, 50) }, 'Message from unregistered Telegram chat - send /start to register');
     return;
   }
 
@@ -244,11 +299,7 @@ async function processMessage(ctx: Context): Promise<void> {
   };
   deps.storeGenericMessage(msg);
 
-  // Check trigger pattern (main group responds to all, others need trigger)
-  const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
-  if (!isMainGroup && !TRIGGER_PATTERN.test(text)) {
-    return;
-  }
+  // Telegram chats always respond (no trigger needed)
 
   // Get conversation context
   const lastAgentTimestamp = deps.getLastAgentTimestamp();
@@ -281,7 +332,7 @@ async function processMessage(ctx: Context): Promise<void> {
 
   if (response) {
     deps.setLastAgentTimestamp(jid, timestamp);
-    await sendTelegramMessage(jid, `${ASSISTANT_NAME}: ${response}`);
+    await sendTelegramMessage(jid, response);
   }
 }
 
@@ -297,8 +348,10 @@ export async function startTelegramBot(dependencies: TelegramDependencies): Prom
   deps = dependencies;
   bot = new Bot(TELEGRAM_BOT_TOKEN);
 
-  // Handle /start and /register commands - generate pairing code
-  bot.command(['start', 'register'], async (ctx) => {
+  // Handle /start command
+  // If TELEGRAM_SECRET is set and correct: auto-register
+  // Otherwise: generate pairing code for user to verify
+  bot.command('start', async (ctx) => {
     const chatId = ctx.chat?.id;
     const chatTitle = ctx.chat?.type === 'private'
       ? ctx.from?.first_name || ctx.from?.username || 'Telegram DM'
@@ -313,27 +366,48 @@ export async function startTelegramBot(dependencies: TelegramDependencies): Prom
     if (registeredGroups[jid]) {
       await ctx.reply(
         `This chat is already registered as "${registeredGroups[jid].name}".\n\n` +
-        `Send a message starting with @${ASSISTANT_NAME} to chat with the assistant.`
+        `You can send messages directly to chat with ${ASSISTANT_NAME}.`
       );
       return;
     }
 
-    // Check for existing pending pairing
-    cleanupExpiredPairings();
-    for (const [code, pairing] of pendingPairings) {
-      if (pairing.jid === jid) {
-        const expiresIn = Math.round((pairing.expiresAt - Date.now()) / 1000 / 60);
+    // Check secret if configured - if correct, auto-register
+    if (TELEGRAM_SECRET) {
+      const args = ctx.message?.text?.split(' ').slice(1).join(' ') || '';
+      if (args === TELEGRAM_SECRET) {
+        // Secret matches - auto-register
+        const folder = `tg-${chatTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20)}`;
+        deps!.registerGroup(jid, {
+          name: chatTitle,
+          folder,
+          trigger: '',
+          added_at: new Date().toISOString()
+        });
+        deps!.sendSystemNotification(`Telegram chat registered: "${chatTitle}" (${folder})`);
         await ctx.reply(
-          `You already have a pending pairing code:\n\n` +
-          `**${code}**\n\n` +
-          `Tell this code to ${ASSISTANT_NAME} via WhatsApp to verify.\n` +
-          `Expires in ${expiresIn} minutes.`
+          `Registered! This chat is now connected.\n\n` +
+          `You can send messages directly to chat with ${ASSISTANT_NAME}.`
+        );
+        logger.info({ jid, chatTitle, folder }, 'Telegram chat registered via secret');
+        return;
+      }
+    }
+
+    // Generate pairing code for admin verification
+    cleanupExpiredPairings();
+
+    // Check if already has a pending pairing
+    for (const [, pairing] of pendingPairings) {
+      if (pairing.jid === jid) {
+        const minutesLeft = Math.round((pairing.expiresAt - Date.now()) / 1000 / 60);
+        await ctx.reply(
+          `A pairing code was already generated (expires in ${minutesLeft} minutes).\n\n` +
+          `Contact the administrator to get your code, then send it here.`
         );
         return;
       }
     }
 
-    // Generate new pairing code
     const code = generatePairingCode();
     pendingPairings.set(code, {
       jid,
@@ -342,13 +416,15 @@ export async function startTelegramBot(dependencies: TelegramDependencies): Prom
       expiresAt: Date.now() + PAIRING_CODE_EXPIRY_MS
     });
 
-    await ctx.reply(
-      `To connect this chat, tell ${ASSISTANT_NAME} via WhatsApp:\n\n` +
-      `"Verify Telegram code ${code}"\n\n` +
-      `This code expires in 60 minutes.`
-    );
-
+    // Log and notify admin via WhatsApp (code only visible to admin)
     logger.info({ jid, chatTitle, code }, 'Telegram pairing code generated');
+    deps!.sendSystemNotification(`Telegram pairing: "${chatTitle}" - Code: ${code}`);
+
+    // Don't show code to user - they need to get it from admin
+    await ctx.reply(
+      `Registration requires verification.\n\n` +
+      `Please contact the administrator to get your pairing code, then send it here.`
+    );
   });
 
   // Handle text messages
@@ -369,6 +445,11 @@ export async function startTelegramBot(dependencies: TelegramDependencies): Prom
   try {
     const me = await bot.api.getMe();
     logger.info({ username: me.username, id: me.id }, 'Telegram bot connected');
+
+    // Set bot commands for menu
+    await bot.api.setMyCommands([
+      { command: 'start', description: 'Register this chat with the assistant' }
+    ]);
 
     // Start polling (non-blocking)
     bot.start({

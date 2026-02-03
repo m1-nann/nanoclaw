@@ -33,3 +33,5 @@ export const TIMEZONE = process.env.TZ || Intl.DateTimeFormat().resolvedOptions(
 // Telegram configuration
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_ENABLED = !!TELEGRAM_BOT_TOKEN;
+// Optional secret for Telegram registration (if empty, registration is open)
+export const TELEGRAM_SECRET = process.env.TELEGRAM_SECRET || '';

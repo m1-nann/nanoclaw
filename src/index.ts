@@ -5,6 +5,7 @@ import makeWASocket, {
   WASocket
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
+import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
 
@@ -32,6 +33,35 @@ const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   transport: { target: 'pino-pretty', options: { colorize: true } }
 });
+
+// Create a wrapper logger for Baileys that demotes INFO to DEBUG
+const baileysLogger: any = {
+  level: logger.level,
+  fatal: logger.fatal.bind(logger),
+  error: logger.error.bind(logger),
+  warn: logger.warn.bind(logger),
+  info: (msg: any, ...args: any[]) => {
+    // Demote Baileys connection INFO logs to DEBUG
+    logger.debug(msg, ...args);
+  },
+  debug: logger.debug.bind(logger),
+  trace: logger.trace.bind(logger),
+  silent: logger.silent?.bind(logger),
+  child: (bindings: any) => {
+    const childLogger = logger.child(bindings);
+    return {
+      level: childLogger.level,
+      fatal: childLogger.fatal.bind(childLogger),
+      error: childLogger.error.bind(childLogger),
+      warn: childLogger.warn.bind(childLogger),
+      info: (msg: any, ...args: any[]) => childLogger.debug(msg, ...args),
+      debug: childLogger.debug.bind(childLogger),
+      trace: childLogger.trace.bind(childLogger),
+      silent: childLogger.silent?.bind(childLogger),
+      child: (bindings2: any) => childLogger.child(bindings2)
+    };
+  }
+};
 
 let sock: WASocket;
 let lastTimestamp = '';
@@ -177,7 +207,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
 
   if (response) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
+    await sendMessage(msg.chat_jid, response);
   }
 }
 
@@ -279,7 +309,7 @@ function startIpcWatcher(): void {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
-                  await sendMessage(data.chatJid, `${ASSISTANT_NAME}: ${data.text}`);
+                  await sendMessage(data.chatJid, data.text);
                   logger.info({ chatJid: data.chatJid, sourceGroup }, 'IPC message sent');
                 } else {
                   logger.warn({ chatJid: data.chatJid, sourceGroup }, 'Unauthorized IPC message attempt blocked');
@@ -527,9 +557,9 @@ async function connectWhatsApp(): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
   sock = makeWASocket({
-    auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
+    auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, baileysLogger) },
     printQRInTerminal: false,
-    logger,
+    logger: baileysLogger,
     browser: ['NanoClaw', 'Chrome', '1.0.0']
   });
 
@@ -537,10 +567,14 @@ async function connectWhatsApp(): Promise<void> {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      const msg = 'WhatsApp authentication required. Run /setup in Claude Code.';
-      logger.error(msg);
-      Bun.spawn(['osascript', '-e', `display notification "${msg}" with title "NanoClaw" sound name "Basso"`]);
-      setTimeout(() => process.exit(1), 1000);
+      console.log('\n╔════════════════════════════════════════════════════════════════╗');
+      console.log('║  WhatsApp Authentication Required                              ║');
+      console.log('╚════════════════════════════════════════════════════════════════╝\n');
+      console.log('Scan this QR code with WhatsApp:\n');
+      console.log('  1. Open WhatsApp on your phone');
+      console.log('  2. Tap Settings → Linked Devices → Link a Device');
+      console.log('  3. Point your camera at the QR code below\n');
+      qrcode.generate(qr, { small: true });
     }
 
     if (connection === 'close') {
@@ -558,27 +592,13 @@ async function connectWhatsApp(): Promise<void> {
     } else if (connection === 'open') {
       logger.info('Connected to WhatsApp');
 
-      // Send startup notification to main group
+      // Send startup notification to main group (WhatsApp used for system events only)
       const mainGroupEntry = Object.entries(registeredGroups).find(
         ([, group]) => group.folder === MAIN_GROUP_FOLDER
       );
       if (mainGroupEntry) {
-        const [mainGroupJid, mainGroup] = mainGroupEntry;
-        sendMessage(mainGroupJid, `${ASSISTANT_NAME}: Started`);
-
-        // Query system status and send to main group
-        (async () => {
-          const localTime = new Date().toLocaleString('en-US', { timeZone: TIMEZONE, dateStyle: 'medium', timeStyle: 'short' });
-          const systemPrompt = `<messages>\n<message sender="System" time="${localTime}">Print system status</message>\n</messages>`;
-          await setTyping(mainGroupJid, true);
-          const response = await runAgent(mainGroup, systemPrompt, mainGroupJid);
-          await setTyping(mainGroupJid, false);
-          if (response) {
-            await sendMessage(mainGroupJid, `${ASSISTANT_NAME}: ${response}`);
-          }
-        })().catch(err => logger.error({ err }, 'Failed to query system status on startup'));
-      } else {
-        logger.warn('No main group registered. Run the setup to register your main WhatsApp group.');
+        const [mainGroupJid] = mainGroupEntry;
+        sendMessage(mainGroupJid, `${ASSISTANT_NAME}: System started`);
       }
 
       // Sync group metadata on startup (respects 24h cache)
@@ -593,7 +613,7 @@ async function connectWhatsApp(): Promise<void> {
         getSessions: () => sessions
       });
       startIpcWatcher();
-      startMessageLoop();
+      // WhatsApp message loop disabled - using WhatsApp for system events only
     }
   });
 
@@ -691,7 +711,19 @@ async function main(): Promise<void> {
         lastAgentTimestamp[jid] = timestamp;
         saveState();
       },
-      registerGroup
+      registerGroup,
+      sendSystemNotification: (text: string) => {
+        // Send to main WhatsApp group
+        const mainGroupEntry = Object.entries(registeredGroups).find(
+          ([, group]) => group.folder === MAIN_GROUP_FOLDER
+        );
+        if (mainGroupEntry) {
+          logger.info({ text, jid: mainGroupEntry[0] }, 'Sending system notification');
+          sendMessage(mainGroupEntry[0], `${ASSISTANT_NAME}: ${text}`);
+        } else {
+          logger.warn({ text }, 'No main group found for system notification');
+        }
+      }
     });
   }
 
