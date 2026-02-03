@@ -163,6 +163,14 @@ export function storeMessage(msg: proto.IWebMessageInfo, chatJid: string, isFrom
     .run(msgId, chatJid, sender, senderName, content, timestamp, isFromMe ? 1 : 0);
 }
 
+/**
+ * Store a generic message (for non-WhatsApp channels like Telegram)
+ */
+export function storeGenericMessage(msg: NewMessage, isFromMe = false): void {
+  db.prepare(`INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(msg.id, msg.chat_jid, msg.sender, msg.sender_name, msg.content, msg.timestamp, isFromMe ? 1 : 0);
+}
+
 export function getNewMessages(jids: string[], lastTimestamp: string, botPrefix: string): { messages: NewMessage[]; newTimestamp: string } {
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 

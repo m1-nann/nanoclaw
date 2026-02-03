@@ -19,10 +19,12 @@ import {
   TIMEZONE
 } from './config.ts';
 import { RegisteredGroup, Session, NewMessage } from './types.ts';
-import { initDatabase, storeMessage, storeChatMetadata, getNewMessages, getMessagesSince, getAllTasks, getTaskById, updateChatName, getAllChats, getLastGroupSync, setLastGroupSync } from './db.ts';
+import { initDatabase, storeMessage, storeGenericMessage, storeChatMetadata, getNewMessages, getMessagesSince, getAllTasks, getTaskById, updateChatName, getAllChats, getLastGroupSync, setLastGroupSync } from './db.ts';
 import { startSchedulerLoop } from './task-scheduler.ts';
 import { runContainerAgent, writeTasksSnapshot, writeGroupsSnapshot, AvailableGroup } from './container-runner.ts';
 import { loadJson, saveJson } from './utils.ts';
+import { startTelegramBot, sendTelegramMessage, setTelegramTyping, verifyPairingCode, getPendingPairings } from './telegram.ts';
+import { TELEGRAM_ENABLED } from './config.ts';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -38,6 +40,13 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
+  // Route to Telegram if JID is a Telegram chat
+  if (jid.startsWith('telegram:')) {
+    await setTelegramTyping(jid, isTyping);
+    return;
+  }
+
+  // WhatsApp typing indicator
   try {
     await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
   } catch (err) {
@@ -220,6 +229,13 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
 }
 
 async function sendMessage(jid: string, text: string): Promise<void> {
+  // Route to Telegram if JID is a Telegram chat
+  if (jid.startsWith('telegram:')) {
+    await sendTelegramMessage(jid, text);
+    return;
+  }
+
+  // WhatsApp message
   try {
     await sock.sendMessage(jid, { text });
     logger.info({ jid, length: text.length }, 'Message sent');
@@ -329,6 +345,8 @@ async function processTaskIpc(
     folder?: string;
     trigger?: string;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For verify_telegram_code
+    code?: string;
   },
   sourceGroup: string,  // Verified identity from IPC directory
   isMain: boolean       // Verified from directory path
@@ -470,6 +488,30 @@ async function processTaskIpc(
         });
       } else {
         logger.warn({ data }, 'Invalid register_group request - missing required fields');
+      }
+      break;
+
+    case 'verify_telegram_code':
+      // Only main group can verify Telegram pairing codes
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized verify_telegram_code attempt blocked');
+        break;
+      }
+      if (data.code) {
+        const result = verifyPairingCode(data.code);
+        if (result) {
+          logger.info({ code: data.code, ...result }, 'Telegram pairing code verified');
+        } else {
+          logger.warn({ code: data.code }, 'Invalid or expired Telegram pairing code');
+        }
+      }
+      break;
+
+    case 'list_telegram_pairings':
+      // Only main group can list pending pairings
+      if (isMain) {
+        const pairings = getPendingPairings();
+        logger.info({ pairings }, 'Pending Telegram pairings');
       }
       break;
 
@@ -636,6 +678,23 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Start Telegram bot if configured
+  if (TELEGRAM_ENABLED) {
+    await startTelegramBot({
+      getRegisteredGroups: () => registeredGroups,
+      getMessagesSince,
+      storeGenericMessage,
+      runAgent,
+      getLastAgentTimestamp: () => lastAgentTimestamp,
+      setLastAgentTimestamp: (jid: string, timestamp: string) => {
+        lastAgentTimestamp[jid] = timestamp;
+        saveState();
+      },
+      registerGroup
+    });
+  }
+
   await connectWhatsApp();
 }
 

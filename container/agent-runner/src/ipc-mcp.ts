@@ -315,6 +315,40 @@ Use available_groups.json to find the JID for a group. The folder name should be
             }]
           };
         }
+      ),
+
+      tool(
+        'verify_telegram_code',
+        `Verify a Telegram pairing code to connect a Telegram chat. Main group only.
+
+When a user sends /start to the Telegram bot, they receive a 6-digit pairing code.
+They need to tell you this code to complete the connection.`,
+        {
+          code: z.string().describe('The 6-digit pairing code from Telegram')
+        },
+        async (args) => {
+          if (!isMain) {
+            return {
+              content: [{ type: 'text', text: 'Only the main group can verify Telegram pairing codes.' }],
+              isError: true
+            };
+          }
+
+          const data = {
+            type: 'verify_telegram_code',
+            code: args.code,
+            timestamp: new Date().toISOString()
+          };
+
+          writeIpcFile(TASKS_DIR, data);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Verifying Telegram pairing code ${args.code}...`
+            }]
+          };
+        }
       )
     ]
   });
