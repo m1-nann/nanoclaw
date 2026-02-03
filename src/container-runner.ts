@@ -40,6 +40,7 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  currentTime: string;  // ISO string in host's local timezone
   isScheduledTask?: boolean;
 }
 
@@ -121,6 +122,10 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
   const envFile = path.join(projectRoot, '.env');
+
+  const envLines: string[] = [];
+
+  // Add allowed vars from .env if it exists
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
     const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
@@ -131,16 +136,19 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
         if (!trimmed || trimmed.startsWith('#')) return false;
         return allowedVars.some(v => trimmed.startsWith(`${v}=`));
       });
-
-    if (filteredLines.length > 0) {
-      fs.writeFileSync(path.join(envDir, 'env'), filteredLines.join('\n') + '\n');
-      mounts.push({
-        hostPath: envDir,
-        containerPath: '/workspace/env-dir',
-        readonly: true
-      });
-    }
+    envLines.push(...filteredLines);
   }
+
+  // Always add TZ from host system so container uses same timezone for scheduled tasks
+  const hostTz = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  envLines.push(`TZ=${hostTz}`);
+
+  fs.writeFileSync(path.join(envDir, 'env'), envLines.join('\n') + '\n');
+  mounts.push({
+    hostPath: envDir,
+    containerPath: '/workspace/env-dir',
+    readonly: true
+  });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -247,7 +255,14 @@ export async function runContainerAgent(
       } else {
         const lines = chunk.trim().split('\n');
         for (const line of lines) {
-          if (line) logger.debug({ container: group.folder }, line);
+          if (line) {
+            // Log time-related lines at info level for debugging timezone issues
+            if (line.includes('Container time:') || line.includes('TZ env:')) {
+              logger.info({ container: group.folder }, line);
+            } else {
+              logger.debug({ container: group.folder }, line);
+            }
+          }
         }
         if (stderrTruncated) continue;
         const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;

@@ -148,7 +148,13 @@ async function processMessage(msg: NewMessage): Promise<void> {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
-    return `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`;
+    // Convert UTC timestamp to local time for the agent
+    const localTime = new Date(m.timestamp).toLocaleString('en-US', {
+      timeZone: TIMEZONE,
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    });
+    return `<message sender="${escapeXml(m.sender_name)}" time="${localTime}">${escapeXml(m.content)}</message>`;
   });
   const prompt = `<messages>\n${lines.join('\n')}\n</messages>`;
 
@@ -192,7 +198,8 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
       sessionId,
       groupFolder: group.folder,
       chatJid,
-      isMain
+      isMain,
+      currentTime: new Date().toLocaleString('en-US', { timeZone: TIMEZONE, dateStyle: 'full', timeStyle: 'long' })
     });
 
     if (output.newSessionId) {
@@ -517,16 +524,17 @@ async function connectWhatsApp(): Promise<void> {
         const [mainGroupJid, mainGroup] = mainGroupEntry;
         sendMessage(mainGroupJid, `${ASSISTANT_NAME}: Started`);
 
-        // Query market status and send to main group
+        // Query system status and send to main group
         (async () => {
-          const marketPrompt = `<messages>\n<message sender="System" time="${new Date().toISOString()}">How is the market today?</message>\n</messages>`;
+          const localTime = new Date().toLocaleString('en-US', { timeZone: TIMEZONE, dateStyle: 'medium', timeStyle: 'short' });
+          const systemPrompt = `<messages>\n<message sender="System" time="${localTime}">Print system status</message>\n</messages>`;
           await setTyping(mainGroupJid, true);
-          const response = await runAgent(mainGroup, marketPrompt, mainGroupJid);
+          const response = await runAgent(mainGroup, systemPrompt, mainGroupJid);
           await setTyping(mainGroupJid, false);
           if (response) {
             await sendMessage(mainGroupJid, `${ASSISTANT_NAME}: ${response}`);
           }
-        })().catch(err => logger.error({ err }, 'Failed to query market status on startup'));
+        })().catch(err => logger.error({ err }, 'Failed to query system status on startup'));
       } else {
         logger.warn('No main group registered. Run the setup to register your main WhatsApp group.');
       }

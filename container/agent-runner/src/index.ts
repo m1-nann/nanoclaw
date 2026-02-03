@@ -15,6 +15,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  currentTime: string;  // Local time from host
 }
 
 interface ContainerOutput {
@@ -207,6 +208,7 @@ async function main(): Promise<void> {
     const stdinData = await readStdin();
     input = JSON.parse(stdinData);
     log(`Received input for group: ${input.groupFolder}`);
+    log(`Container time: ${new Date().toLocaleString()} | TZ env: ${process.env.TZ || 'not set'} | Host time: ${input.currentTime}`);
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -225,10 +227,14 @@ async function main(): Promise<void> {
   let result: string | null = null;
   let newSessionId: string | undefined;
 
-  // Add context for scheduled tasks
+  // Build prompt with context
   let prompt = input.prompt;
+  const timeContext = `[Current time: ${input.currentTime}]`;
+
   if (input.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - You are running automatically, not in response to a user message. Use mcp__nanoclaw__send_message if needed to communicate with the user.]\n\n${input.prompt}`;
+    prompt = `${timeContext}\n[SCHEDULED TASK - You are running automatically, not in response to a user message. Use mcp__nanoclaw__send_message if needed to communicate with the user.]\n\n${input.prompt}`;
+  } else {
+    prompt = `${timeContext}\n${input.prompt}`;
   }
 
   try {

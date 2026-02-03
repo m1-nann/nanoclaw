@@ -68,7 +68,8 @@ async function runTask(task: ScheduledTask, deps: SchedulerDependencies): Promis
       groupFolder: task.group_folder,
       chatJid: task.chat_jid,
       isMain,
-      isScheduledTask: true
+      isScheduledTask: true,
+      currentTime: new Date().toLocaleString('en-US', { timeZone: TIMEZONE, dateStyle: 'full', timeStyle: 'long' })
     });
 
     if (output.status === 'error') {
